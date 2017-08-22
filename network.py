@@ -2,6 +2,10 @@ import tensorflow as tf
 import numpy as np
 slim = tf.contrib.slim
 from read_data import get_labels_from_annotation_batch
+from utils import bilinear_upsample_weights
+
+_R_MEAN, _G_MEAN, _B_MEAN = 81.3248221581, 82.8885101581, 74.3227916923
+_R_STD, _G_STD, _B_STD = 48.259435032, 46.4056460321, 47.5958357329
 
 def model_input(input_image_shape, label_image_shape):
     # Create and return the placeholders for receiving data
@@ -84,6 +88,31 @@ def add_upsampling_layer(net, size, scope, theta=0.5):
                           activation_fn=None, normalizer_fn=None)
         return net
 
+def add_bilinear_upsampling_transposed_convolution_layer(net, factor, number_of_classes, scope):
+    with tf.variable_scope(scope):
+        # if factor = 2, the filter has shape (4, 4, number_of_classes, number_of_classes)
+        upsample_filter_factor_2 = tf.constant(bilinear_upsample_weights(factor, number_of_classes))
+        net = slim.batch_norm(net, activation_fn=tf.nn.relu)
+
+        net = slim.conv2d(net, number_of_classes, [1,1], scope='conv1x1',
+                          activation_fn=None, normalizer_fn=None)
+
+        # Calculate the ouput size of the upsampled tensor
+        net_static_shape = net.get_shape().as_list()
+        net_dynamic_shape = tf.shape(net)
+        upsampled_layer_by_factor_2_shape = tf.stack([net_dynamic_shape[0], net_static_shape[1] * 2, net_static_shape[2] * 2, net_static_shape[3]])
+        net = tf.nn.conv2d_transpose(net, upsample_filter_factor_2, output_shape=upsampled_layer_by_factor_2_shape, strides=[1, 2, 2, 1], padding="SAME")
+
+        # because transpose conv losses all the tensor shape information,
+        # we perform a reshape op to regain this static information
+        net = tf.reshape(net, [-1, net_static_shape[1] * 2, net_static_shape[2] * 2, net_static_shape[3]])
+
+        ##print(net)
+        net = slim.conv2d(net, number_of_classes, [3,3], scope='conv3x3',
+                          activation_fn=None, normalizer_fn=None)
+        return net
+
+
 @slim.add_arg_scope
 def add_aspp_layer(net, scope, summary=True):
     """
@@ -110,7 +139,6 @@ def add_aspp_layer(net, scope, summary=True):
             tf.summary.image("net", net[:,:,:,:1], 1)
         return net
 
-
 def model(batch_images, args):
     """
 
@@ -130,6 +158,14 @@ def model(batch_images, args):
     mask_np[:,:,0] = 0
     mask_tensor = tf.constant(mask_np)
 
+    if args.normalizer == "mean_subtraction":
+        # Using Mean Subtraction nomalization
+        batch_images = batch_images - [_R_MEAN, _G_MEAN, _B_MEAN]
+        batch_images = batch_images / [_R_STD, _G_STD, _B_STD]
+    elif args.normalizer == "standard":
+        # Zero mean and equal variance normalization
+        batch_images = (batch_images - 128.) / 128.
+
     # batch_images shape (?, 224,224,3)
     with slim.arg_scope([slim.conv2d], padding='SAME',
                         weights_initializer=slim.variance_scaling_initializer(),
@@ -140,36 +176,33 @@ def model(batch_images, args):
                         weights_regularizer=slim.l2_regularizer(args.l2_regularizer)):
 
         with slim.arg_scope([slim.batch_norm], **batch_norm_params):
-
             # We refer to layers between blocks as transition layers, which do convolution and pooling
             net = slim.conv2d(batch_images, 2*args.growth_rate, [7,7], scope='conv1', stride=2) # output stride 2
 
             # dense block 1
-            block_1 = add_dense_block(net, args.growth_rate, 6, "block_1", args.keep_prob)
+            block_1 = add_dense_block(net, args.growth_rate, 12, "block_1", args.keep_prob)
 
             net = add_transition_layer(block_1, args.keep_prob, scope="transition_layer_1") # output stride 4
 
             # dense block 2
-            block_2 = add_dense_block(net, args.growth_rate, 12, "block_2", args.keep_prob)
+            block_2 = add_dense_block(net, args.growth_rate, 24, "block_2", args.keep_prob)
 
             net = add_transition_layer(block_2, args.keep_prob, scope="transition_layer_2", pooling=False) # output stride 4
-
-            # dense block 3
-            block_3 = add_dense_block(net, args.growth_rate, 24, "block_3", args.keep_prob)
-
-            net = add_transition_layer(block_3, args.keep_prob, scope="transition_layer_3", pooling=False) # output stride 8
 
             #####################################
             # DenseNet based Decoder
             #####################################
 
-            block_2_shape = tf.shape(block_2)
-            new_size = (block_2_shape[1], block_2_shape[2])
-            net = add_upsampling_layer(net, new_size, scope="upsampling_layer_1")  # output stride 4
+            if args.upsampling_mode == "resize":
+                block_1_shape = tf.shape(block_1)
+                new_size = (block_1_shape[1], block_1_shape[2])
+                net = add_upsampling_layer(net, new_size, scope="upsampling_layer_1")  # output stride 4
+            elif args.upsampling_mode == "bilinear_transpose_conv":
+                net = add_bilinear_upsampling_transposed_convolution_layer(net, 2, args.number_of_classes, scope="bilinear_upsampling_layer_1")
 
-            multi_grid = [1,2,1]
+            multi_grid = [1,1,1,2,2,2,1,1,1]
             rate = 2
-            net = add_dense_block(net, args.growth_rate, 3, scope="block_4",
+            net = add_dense_block(net, args.growth_rate, 9, scope="block_3",
                                   keep_prob=args.keep_prob, multi_grid=multi_grid, rate=rate)
 
             # if true, implement an Atrous Spatial Pyrimid Pooling layer before the logits output.
@@ -187,8 +220,8 @@ def model(batch_images, args):
                 net = tf.image.resize_images(net, new_size)
 
             # If true, zero out all the logits from class 0 before calculating the softmax with cross entropy loss
-            if args.zero_class_logits:
-                net = tf.cond(args.is_training, lambda: tf.multiply(net, mask_tensor), lambda: net)
+            if args.channel_wise_inhibited_softmax:
+                net = tf.multiply(net, mask_tensor, name="channel_wise_inhibited_softmax")
 
             tf.summary.image("output", net, 1)
             return net

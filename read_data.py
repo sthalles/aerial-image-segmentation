@@ -2,22 +2,10 @@ import numpy as np
 from scipy.misc import imread
 import tensorflow as tf
 
-_R_MEAN, _G_MEAN, _B_MEAN = 81.3248221581, 82.8885101581, 74.3227916923
-_R_STD, _G_STD, _B_STD = 48.259435032, 46.4056460321, 47.5958357329
-
 def read_image_and_annotation(train_images_dir, train_annotations_dir, image_name, normalizer):
     # read the input and annotation images
     image = imread(train_images_dir + image_name.strip() + ".tiff")
     annotation = imread(train_annotations_dir + image_name.strip() + ".tif")
-
-    if normalizer == "mean_subtraction":
-        # Using Mean Subtraction nomalization
-        image = image - [_R_MEAN, _G_MEAN, _B_MEAN]
-        image = image / [_R_STD, _G_STD, _B_STD]
-    elif normalizer == "standard":
-        # Zero mean and equal variance normalization
-        image = (image - 128.) / 128.
-
     return image.astype(np.float32), annotation
 
 
@@ -52,7 +40,18 @@ def next_batch(train_images_dir, train_annotations_dir, image_filenames_list, ba
 
         if random_cropping:
             for batch_i in range(batch_size):
-                random_image_patch, random_annotation_patch = random_crop(image_np, annotation_np, crop_size)
+                while True:
+                    random_image_patch, random_annotation_patch = random_crop(image_np, annotation_np, crop_size)
+
+                    # count the # of zeros in the image patch, because the dataset has some images with zeros (invalid areas)
+                    # we crop patches that have less than 10% of white pixels in it
+                    n_of_zeros = np.sum(np.all(random_image_patch == [255,255,255], axis=2))
+
+                    #print("# of zeros:", n_of_zeros, "from image:", image_name)
+                    if n_of_zeros < 0.01 * (crop_size * crop_size):
+                        break
+                    print("Repicking patch for image:", image_name)
+
                 random_image_patch = np.expand_dims(random_image_patch, axis=0)
                 random_annotation_patch = np.expand_dims(random_annotation_patch, axis=0)
 
@@ -170,7 +169,7 @@ def get_labels_from_annotation_batch(annotation_batch_tensor, class_labels):
     return batch_labels
 
 def reconstruct_image(annotations_batch, crop_size=250, channels=1):
-    output_image = np.zeros((1500,1500,channels), dtype=np.uint8)
+    output_image = np.zeros((1500,1500,channels), dtype=np.float32)
     g_counter = 0
 
     for i in range(0, 1500, crop_size):

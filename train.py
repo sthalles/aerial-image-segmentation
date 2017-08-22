@@ -23,23 +23,23 @@ envarg.add_argument("--number_of_classes", type=int, default=3, help="Number of 
 envarg.add_argument("--aspp", type=bool, default=True, help="Use Atrous spatial pyrimid pooling.")
 envarg.add_argument("--image_summary", type=bool, default=True, help="Activate tensorboard image_summary.")
 envarg.add_argument("--l2_regularizer", type=float, default=0.0001, help="l2 regularizer parameter.")
-envarg.add_argument("--zero_class_logits", type=bool, default=False, help="zero background logits.")
+envarg.add_argument("--channel_wise_inhibited_softmax", type=bool, default=True, help="Apply channel wise inhibited softmax.")
 envarg.add_argument('--normalizer', choices=['standard', 'mean_subtraction'], default='mean_subtraction', help='Normalization option.')
+envarg.add_argument('--upsampling_mode', choices=['resize', 'bilinear_transpose_conv'], default='bilinear_transpose_conv', help='Upsampling algorithm.')
 
 dataarg = parser.add_argument_group('Read data')
-dataarg.add_argument("--crop_size", type=float, default=250, help="Crop size for batch training.")
+dataarg.add_argument("--crop_size", type=float, default=75, help="Crop size for batch training.")
 
 trainarg = parser.add_argument_group('Training')
-trainarg.add_argument("--batch_size", type=int, default=16, help="Batch size for network training.")
-trainarg.add_argument("--total_epochs", type=int, default=500, help="Epoch total number for network training.")
-trainarg.add_argument("--input_image_shape", type=int, default=16, help="Batch size for network training.")
+trainarg.add_argument("--batch_size", type=int, default=64, help="Batch size for network training.")
+trainarg.add_argument("--total_epochs", type=int, default=550, help="Epoch total number for network training.")
 
 args = parser.parse_args()
 
-log_folder = '/home/thalles/log_folder'
+log_folder = '/home/thalles_silva/log_folder'
 
 # define the images and annotations path
-base_dataset_dir = "/home/thalles/mass_merged"
+base_dataset_dir = "/home/thalles_silva/DataPublic/Road_and_Buildings_detection_dataset/mass_merged"
 train_dataset_base_dir = os.path.join(base_dataset_dir, "train")
 images_folder_name = "sat/"
 annotations_folder_name = "map/"
@@ -47,7 +47,7 @@ train_images_dir = os.path.join(train_dataset_base_dir, images_folder_name)
 train_annotations_dir = os.path.join(train_dataset_base_dir, annotations_folder_name)
 
 # read the train.txt file. This file contains the training images' names
-file = open(os.path.join(train_dataset_base_dir, "train.txt"), 'r')
+file = open(os.path.join(train_dataset_base_dir, "train_all.txt"), 'r')
 images_filename_list = [line for line in file]
 number_of_train_examples = len(images_filename_list)
 print("number_of_train_examples:", number_of_train_examples)
@@ -82,7 +82,7 @@ cross_entropy, pred, probabilities = model_loss(logits, batch_labels_placeholder
 # Example: decay from 0.01 to 0.0001 in 10000 steps using sqrt (i.e. power=1. linearly):
 global_step = tf.Variable(0, trainable=False)
 starter_learning_rate = 0.1
-end_learning_rate = 0.001
+end_learning_rate = 0.0001
 decay_steps = total_step
 learning_rate = tf.train.polynomial_decay(starter_learning_rate, global_step,
                                           decay_steps, end_learning_rate,
@@ -173,28 +173,11 @@ with tf.Session() as sess:
 
             test_writer.add_summary(summary_string, global_step_np)
 
-            # Save the variables to disk.
-            save_path = saver.save(sess, log_folder + "/train" + "/model.ckpt")
-
         # at the end epoch shuffle the dataset list files
         np.random.shuffle(images_filename_list)
         np.random.shuffle(val_images_filename_list)
 
-    ########################
-    ### final evaluation ###
-    ########################
-    val_image_id = 0
-    for batch_images_val, batch_annotations_val, _, _ in next_batch(val_images_dir, val_annotations_dir, val_images_filename_list,
-                                                              crop_size=args.crop_size, random_cropping=False, normalizer=args.normalizer):
-
-        pred_np, probabilities_np = sess.run([pred, probabilities],
-                                                            feed_dict={is_training_placeholder: False,
-                                                                      batch_images_placeholder:batch_images_val,
-                                                                      batch_labels_placeholder:batch_annotations_val,
-                                                                      keep_prob: 1.0})
-
-        reconstructed_image = reconstruct_image(pred_np, args.crop_size)
-        imsave(log_folder + "/test/val_" + str(val_image_id) + ".jpeg", np.squeeze(reconstructed_image))
-        val_image_id += 1
+    # Save the variables to disk.
+    save_path = saver.save(sess, log_folder + "/train" + "/model.ckpt")
 
     train_writer.close()
