@@ -154,10 +154,6 @@ def model(batch_images, args):
       'updates_collections': tf.GraphKeys.UPDATE_OPS,
     }
 
-    mask_np = np.ones((args.crop_size,args.crop_size,3), dtype =np.float32)
-    mask_np[:,:,0] = 0
-    mask_tensor = tf.constant(mask_np)
-
     if args.normalizer == "mean_subtraction":
         # Using Mean Subtraction nomalization
         batch_images = batch_images - [_R_MEAN, _G_MEAN, _B_MEAN]
@@ -216,12 +212,11 @@ def model(batch_images, args):
             batch_images_shape = tf.shape(batch_images)
             new_size = (batch_images_shape[1], batch_images_shape[2])
 
-            if args.image_summary:
-                net = tf.image.resize_images(net, new_size)
+            net = tf.image.resize_images(net, new_size)
 
             # If true, zero out all the logits from class 0 before calculating the softmax with cross entropy loss
             if args.channel_wise_inhibited_softmax:
-                net = tf.multiply(net, mask_tensor, name="channel_wise_inhibited_softmax")
+                net = tf.multiply(net, [0,1,1], name="channel_wise_inhibited_softmax")
 
             tf.summary.image("output", net, 1)
             return net

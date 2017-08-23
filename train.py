@@ -25,7 +25,7 @@ envarg.add_argument("--image_summary", type=bool, default=True, help="Activate t
 envarg.add_argument("--l2_regularizer", type=float, default=0.0001, help="l2 regularizer parameter.")
 envarg.add_argument("--channel_wise_inhibited_softmax", type=bool, default=True, help="Apply channel wise inhibited softmax.")
 envarg.add_argument('--normalizer', choices=['standard', 'mean_subtraction'], default='mean_subtraction', help='Normalization option.')
-envarg.add_argument('--upsampling_mode', choices=['resize', 'bilinear_transpose_conv'], default='bilinear_transpose_conv', help='Upsampling algorithm.')
+envarg.add_argument('--upsampling_mode', choices=['resize', 'bilinear_transpose_conv'], default='resize', help='Upsampling algorithm.')
 
 dataarg = parser.add_argument_group('Read data')
 dataarg.add_argument("--crop_size", type=float, default=75, help="Crop size for batch training.")
