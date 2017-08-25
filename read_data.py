@@ -50,7 +50,7 @@ def next_batch(train_images_dir, train_annotations_dir, image_filenames_list, ba
                     #print("# of zeros:", n_of_zeros, "from image:", image_name)
                     if n_of_zeros < 0.01 * (crop_size * crop_size):
                         break
-                    print("Repicking patch for image:", image_name)
+                    # print("Repicking patch for image:", image_name)
 
                 random_image_patch = np.expand_dims(random_image_patch, axis=0)
                 random_annotation_patch = np.expand_dims(random_annotation_patch, axis=0)

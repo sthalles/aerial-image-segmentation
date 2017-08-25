@@ -8,6 +8,8 @@ from matplotlib import pyplot as plt
 from scipy.misc import imsave
 slim = tf.contrib.slim
 import os
+import json
+
 plt.interactive(False)
 
 parser = argparse.ArgumentParser()
@@ -18,11 +20,13 @@ envarg.add_argument('--batch_norm_decay', type=float, default=0.997, help='batch
 envarg.add_argument('--keep_prob', type=float, default=1.0, help='Dropout keep probability.')
 envarg.add_argument("--is_training", type=int, default=True, help="Is training flag for batch normalization")
 envarg.add_argument("--theta", type=float, default=1.0, help="Compression factor for the DenseNetwork 0 < θ ≤1.")
-envarg.add_argument("--growth_rate", type=int, default=16, help="Growth rate for the DenseNetwork, the paper refars to it as the k parameter.")
+envarg.add_argument("--growth_rate", type=int, default=32, help="Growth rate for the DenseNetwork, the paper refars to it as the k parameter.")
 envarg.add_argument("--number_of_classes", type=int, default=3, help="Number of classes to be predicted.")
 envarg.add_argument("--aspp", type=bool, default=True, help="Use Atrous spatial pyrimid pooling.")
 envarg.add_argument("--image_summary", type=bool, default=True, help="Activate tensorboard image_summary.")
 envarg.add_argument("--l2_regularizer", type=float, default=0.0001, help="l2 regularizer parameter.")
+envarg.add_argument('--starting_learning_rate', type=float, default=0.1, help="starting learning rate.")
+envarg.add_argument('--ending_learning_rate', type=float, default=0.00001, help="starting learning rate.")
 envarg.add_argument("--channel_wise_inhibited_softmax", type=bool, default=True, help="Apply channel wise inhibited softmax.")
 envarg.add_argument('--normalizer', choices=['standard', 'mean_subtraction'], default='mean_subtraction', help='Normalization option.')
 envarg.add_argument('--upsampling_mode', choices=['resize', 'bilinear_transpose_conv'], default='resize', help='Upsampling algorithm.')
@@ -35,6 +39,10 @@ trainarg.add_argument("--batch_size", type=int, default=64, help="Batch size for
 trainarg.add_argument("--total_epochs", type=int, default=550, help="Epoch total number for network training.")
 
 args = parser.parse_args()
+
+with open(log_folder + "/train" + 'data.json', 'w') as fp:
+    json.dump(args, fp, sort_keys=True, indent=4)
+exit()
 
 log_folder = '/home/thalles_silva/log_folder'
 
@@ -81,11 +89,9 @@ cross_entropy, pred, probabilities = model_loss(logits, batch_labels_placeholder
 
 # Example: decay from 0.01 to 0.0001 in 10000 steps using sqrt (i.e. power=1. linearly):
 global_step = tf.Variable(0, trainable=False)
-starter_learning_rate = 0.1
-end_learning_rate = 0.0001
 decay_steps = total_step
-learning_rate = tf.train.polynomial_decay(starter_learning_rate, global_step,
-                                          decay_steps, end_learning_rate,
+learning_rate = tf.train.polynomial_decay(args.starting_learning_rate, global_step,
+                                          decay_steps, args.ending_learning_rate,
                                           power=1)
 
 with tf.variable_scope("adam_vars"):
@@ -179,5 +185,8 @@ with tf.Session() as sess:
 
     # Save the variables to disk.
     save_path = saver.save(sess, log_folder + "/train" + "/model.ckpt")
+
+    with open(log_folder + "/train/" + 'data.json', 'w') as fp:
+        json.dump(args.__dict__, fp, sort_keys=True, indent=4)
 
     train_writer.close()
