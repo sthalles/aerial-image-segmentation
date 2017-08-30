@@ -154,6 +154,10 @@ def model(batch_images, args):
       'updates_collections': tf.GraphKeys.UPDATE_OPS,
     }
 
+    if args.augmentation and args.is_training:
+        batch_images = tf.map_fn(lambda img: tf.image.random_brightness(img, max_delta=63), batch_images)
+        batch_images = tf.map_fn(lambda img: tf.image.random_contrast(img, lower=0.4, upper=1.6), batch_images)
+
     if args.normalizer == "mean_subtraction":
         # Using Mean Subtraction nomalization
         batch_images = batch_images - [_R_MEAN, _G_MEAN, _B_MEAN]
@@ -161,6 +165,8 @@ def model(batch_images, args):
     elif args.normalizer == "standard":
         # Zero mean and equal variance normalization
         batch_images = (batch_images - 128.) / 128.
+    elif args.normalizer == "simple_norm":
+        batch_images = batch_images / 255.
 
     # batch_images shape (?, 224,224,3)
     with slim.arg_scope([slim.conv2d], padding='SAME',
@@ -176,12 +182,12 @@ def model(batch_images, args):
             net = slim.conv2d(batch_images, 2*args.growth_rate, [7,7], scope='conv1', stride=2) # output stride 2
 
             # dense block 1
-            block_1 = add_dense_block(net, args.growth_rate, 12, "block_1", args.keep_prob)
+            block_1 = add_dense_block(net, args.growth_rate, 9, "block_1", args.keep_prob)
 
             net = add_transition_layer(block_1, args.keep_prob, scope="transition_layer_1") # output stride 4
 
             # dense block 2
-            block_2 = add_dense_block(net, args.growth_rate, 24, "block_2", args.keep_prob)
+            block_2 = add_dense_block(net, args.growth_rate, 9, "block_2", args.keep_prob)
 
             net = add_transition_layer(block_2, args.keep_prob, scope="transition_layer_2", pooling=False) # output stride 4
 
@@ -201,18 +207,25 @@ def model(batch_images, args):
             net = add_dense_block(net, args.growth_rate, 9, scope="block_3",
                                   keep_prob=args.keep_prob, multi_grid=multi_grid, rate=rate)
 
+            if args.upsampling_mode == "resize":
+                # resize the image to its original size
+                batch_images_shape = tf.shape(batch_images)
+                new_size = (batch_images_shape[1], batch_images_shape[2])
+                net = add_upsampling_layer(net, new_size, scope="upsampling_layer_2")  # output stride 4
+            elif args.upsampling_mode == "bilinear_transpose_conv":
+                net = add_bilinear_upsampling_transposed_convolution_layer(net, 2, args.number_of_classes, scope="bilinear_upsampling_layer_2")
+
+            multi_grid = [1,2,1]
+            rate = 4
+            net = add_dense_block(net, 16, 3, scope="block_4",
+                                  keep_prob=args.keep_prob, multi_grid=multi_grid, rate=rate)
+
             # if true, implement an Atrous Spatial Pyrimid Pooling layer before the logits output.
             if args.aspp:
                 net = add_aspp_layer(net, "aspp_layer_1")
 
             net = slim.batch_norm(net, activation_fn=tf.nn.relu)
             net = slim.conv2d(net, args.number_of_classes, (3,3), activation_fn=None, normalizer_fn=None)
-
-            # resize the image to its original size
-            batch_images_shape = tf.shape(batch_images)
-            new_size = (batch_images_shape[1], batch_images_shape[2])
-
-            net = tf.image.resize_images(net, new_size)
 
             # If true, zero out all the logits from class 0 before calculating the softmax with cross entropy loss
             if args.channel_wise_inhibited_softmax:

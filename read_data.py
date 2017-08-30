@@ -1,8 +1,9 @@
 import numpy as np
 from scipy.misc import imread
 import tensorflow as tf
+from PIL import ImageEnhance
 
-def read_image_and_annotation(train_images_dir, train_annotations_dir, image_name, normalizer):
+def read_image_and_annotation(train_images_dir, train_annotations_dir, image_name):
     # read the input and annotation images
     image = imread(train_images_dir + image_name.strip() + ".tiff")
     annotation = imread(train_annotations_dir + image_name.strip() + ".tif")
@@ -31,7 +32,7 @@ def next_batch(train_images_dir, train_annotations_dir, image_filenames_list, ba
 
     for image_name in image_filenames_list:
 
-        image_np, annotation_np = read_image_and_annotation(train_images_dir, train_annotations_dir, image_name, normalizer=normalizer )
+        image_np, annotation_np = read_image_and_annotation(train_images_dir, train_annotations_dir, image_name)
 
         batch_images = None
         batch_labels = None

@@ -26,10 +26,12 @@ envarg.add_argument("--aspp", type=bool, default=True, help="Use Atrous spatial 
 envarg.add_argument("--image_summary", type=bool, default=True, help="Activate tensorboard image_summary.")
 envarg.add_argument("--l2_regularizer", type=float, default=0.0001, help="l2 regularizer parameter.")
 envarg.add_argument('--starting_learning_rate', type=float, default=0.1, help="starting learning rate.")
-envarg.add_argument('--ending_learning_rate', type=float, default=0.00001, help="starting learning rate.")
+envarg.add_argument('--ending_learning_rate', type=float, default=10**-7, help="starting learning rate.")
+envarg.add_argument('--optimizer',choices=['momentum', 'adam', 'rmsprop'], default='momentum', help='Optimizer of choice.')
 envarg.add_argument("--channel_wise_inhibited_softmax", type=bool, default=True, help="Apply channel wise inhibited softmax.")
-envarg.add_argument('--normalizer', choices=['standard', 'mean_subtraction'], default='mean_subtraction', help='Normalization option.')
+envarg.add_argument('--normalizer', choices=['standard', 'mean_subtraction', 'simple_norm'], default='simple_norm', help='Normalization option.')
 envarg.add_argument('--upsampling_mode', choices=['resize', 'bilinear_transpose_conv'], default='resize', help='Upsampling algorithm.')
+envarg.add_argument("--augmentation", type=bool, default=True, help="Whether or not to use data augmentation.")
 
 dataarg = parser.add_argument_group('Read data')
 dataarg.add_argument("--crop_size", type=float, default=75, help="Crop size for batch training.")
@@ -39,10 +41,6 @@ trainarg.add_argument("--batch_size", type=int, default=64, help="Batch size for
 trainarg.add_argument("--total_epochs", type=int, default=550, help="Epoch total number for network training.")
 
 args = parser.parse_args()
-
-with open(log_folder + "/train" + 'data.json', 'w') as fp:
-    json.dump(args, fp, sort_keys=True, indent=4)
-exit()
 
 log_folder = '/home/thalles_silva/log_folder'
 
@@ -95,7 +93,13 @@ learning_rate = tf.train.polynomial_decay(args.starting_learning_rate, global_st
                                           power=1)
 
 with tf.variable_scope("adam_vars"):
-    optimizer = tf.train.MomentumOptimizer(learning_rate=learning_rate, momentum=0.9)
+    if args.optimizer == "momentum":
+        optimizer = tf.train.MomentumOptimizer(learning_rate=learning_rate, momentum=0.9)
+    elif args.optimizer == "adam":
+        optimizer = tf.train.AdamOptimizer(learning_rate=learning_rate)
+    elif args.optimizer == "rmsprop":
+        optimizer = tf.train.RMSPropOptimizer(learning_rate=learning_rate, momentum=0.0, decay=0.9, epsilon=1e-10)
+
     # #optimizer = tf.train.AdamOptimizer(learning_rate=0.01)
     gradients = optimizer.compute_gradients(loss=cross_entropy)
     train_step = slim.learning.create_train_op(cross_entropy, optimizer, global_step=global_step)
