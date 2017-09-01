@@ -15,19 +15,18 @@ plt.interactive(False)
 parser = argparse.ArgumentParser()
 
 envarg = parser.add_argument_group('Model')
-envarg.add_argument("--batch_norm_epsilon", type=float, default=1e-5, help="batch norm epsilon argument for batch normalization")
-envarg.add_argument('--batch_norm_decay', type=float, default=0.997, help='batch norm decay argument for batch normalization.')
+envarg.add_argument("--batch_norm_epsilon", type=float, default=0.001, help="batch norm epsilon argument for batch normalization")
+envarg.add_argument('--batch_norm_decay', type=float, default=0.9997, help='batch norm decay argument for batch normalization.')
 envarg.add_argument('--keep_prob', type=float, default=1.0, help='Dropout keep probability.')
-envarg.add_argument("--is_training", type=int, default=True, help="Is training flag for batch normalization")
 envarg.add_argument("--theta", type=float, default=1.0, help="Compression factor for the DenseNetwork 0 < θ ≤1.")
 envarg.add_argument("--growth_rate", type=int, default=32, help="Growth rate for the DenseNetwork, the paper refars to it as the k parameter.")
 envarg.add_argument("--number_of_classes", type=int, default=3, help="Number of classes to be predicted.")
 envarg.add_argument("--aspp", type=bool, default=True, help="Use Atrous spatial pyrimid pooling.")
 envarg.add_argument("--image_summary", type=bool, default=True, help="Activate tensorboard image_summary.")
-envarg.add_argument("--l2_regularizer", type=float, default=0.0001, help="l2 regularizer parameter.")
-envarg.add_argument('--starting_learning_rate', type=float, default=0.1, help="starting learning rate.")
-envarg.add_argument('--ending_learning_rate', type=float, default=10**-7, help="starting learning rate.")
-envarg.add_argument('--optimizer',choices=['momentum', 'adam', 'rmsprop'], default='momentum', help='Optimizer of choice.')
+envarg.add_argument("--l2_regularizer", type=float, default=0.00004, help="l2 regularizer parameter.")
+envarg.add_argument('--starting_learning_rate', type=float, default=0.001, help="starting learning rate.")
+envarg.add_argument('--ending_learning_rate', type=float, default=10**-8, help="starting learning rate.")
+envarg.add_argument('--optimizer',choices=['momentum', 'adam', 'rmsprop'], default='adam', help='Optimizer of choice.')
 envarg.add_argument("--channel_wise_inhibited_softmax", type=bool, default=True, help="Apply channel wise inhibited softmax.")
 envarg.add_argument('--normalizer', choices=['standard', 'mean_subtraction', 'simple_norm'], default='simple_norm', help='Normalization option.')
 envarg.add_argument('--upsampling_mode', choices=['resize', 'bilinear_transpose_conv'], default='resize', help='Upsampling algorithm.')
@@ -80,7 +79,7 @@ label_image_shape = [args.crop_size, args.crop_size]
 # get the model placeholders
 batch_images_placeholder, batch_labels_placeholder, is_training_placeholder, keep_prob = model_input(input_image_shape, label_image_shape)
 
-logits = model(batch_images_placeholder, args)
+logits = model(batch_images_placeholder, args, is_training_placeholder)
 
 # get the error and predictions from the network
 cross_entropy, pred, probabilities = model_loss(logits, batch_labels_placeholder, class_labels)
@@ -144,7 +143,7 @@ with tf.Session() as sess:
 
             _, global_step_np, train_loss, pred_np, probabilities_np, summary_string, lr_np = sess.run([train_step, global_step, cross_entropy, pred,
                                                                                  probabilities, merged_summary_op, learning_rate],
-                                                        feed_dict={is_training_placeholder: args.is_training,
+                                                        feed_dict={is_training_placeholder: True,
                                                                   batch_images_placeholder:batch_image,
                                                                   batch_labels_placeholder:batch_annotations,
                                                                   keep_prob: args.keep_prob})
