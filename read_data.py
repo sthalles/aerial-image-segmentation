@@ -28,7 +28,7 @@ def random_crop(image_np, annotation_np, crop_size=128):
     return image_np[random_x:offset_x, random_y:offset_y,:], annotation_np[random_x:offset_x, random_y:offset_y]
 
 
-def next_batch(train_images_dir, train_annotations_dir, image_filenames_list, batch_size=5, crop_size=128, random_cropping=True, normalizer="standard"):
+def next_batch(train_images_dir, train_annotations_dir, image_filenames_list, batch_size=5, crop_size=128, random_cropping=True):
 
     for image_name in image_filenames_list:
 

@@ -1,5 +1,5 @@
 import argparse
-from network import model_input, model, model_loss
+from network import model_input, model, model_loss, model_arg_scope, lighter_model
 import tensorflow as tf
 from tensorflow.python.ops import control_flow_ops
 from read_data import next_batch, reconstruct_image
@@ -9,6 +9,7 @@ from scipy.misc import imsave
 slim = tf.contrib.slim
 import os
 import json
+from preprocessing import random_flip_image_and_annotation
 
 plt.interactive(False)
 
@@ -16,28 +17,28 @@ parser = argparse.ArgumentParser()
 
 envarg = parser.add_argument_group('Model')
 envarg.add_argument("--batch_norm_epsilon", type=float, default=0.001, help="batch norm epsilon argument for batch normalization")
-envarg.add_argument('--batch_norm_decay', type=float, default=0.9997, help='batch norm decay argument for batch normalization.')
+envarg.add_argument('--batch_norm_decay', type=float, default=0.9, help='batch norm decay argument for batch normalization.')
 envarg.add_argument('--keep_prob', type=float, default=1.0, help='Dropout keep probability.')
 envarg.add_argument("--theta", type=float, default=1.0, help="Compression factor for the DenseNetwork 0 < θ ≤1.")
-envarg.add_argument("--growth_rate", type=int, default=32, help="Growth rate for the DenseNetwork, the paper refars to it as the k parameter.")
+envarg.add_argument("--growth_rate", type=int, default=16, help="Growth rate for the DenseNetwork, the paper refars to it as the k parameter.")
 envarg.add_argument("--number_of_classes", type=int, default=3, help="Number of classes to be predicted.")
 envarg.add_argument("--aspp", type=bool, default=True, help="Use Atrous spatial pyrimid pooling.")
 envarg.add_argument("--image_summary", type=bool, default=True, help="Activate tensorboard image_summary.")
 envarg.add_argument("--l2_regularizer", type=float, default=0.00004, help="l2 regularizer parameter.")
-envarg.add_argument('--starting_learning_rate', type=float, default=0.001, help="starting learning rate.")
-envarg.add_argument('--ending_learning_rate', type=float, default=10**-8, help="starting learning rate.")
-envarg.add_argument('--optimizer',choices=['momentum', 'adam', 'rmsprop'], default='adam', help='Optimizer of choice.')
+envarg.add_argument('--starting_learning_rate', type=float, default=0.0006, help="starting learning rate.")
+envarg.add_argument('--ending_learning_rate', type=float, default=6**-6, help="starting learning rate.")
+envarg.add_argument('--optimizer',choices=['momentum', 'adam', 'rmsprop'], default='rmsprop', help='Optimizer of choice.')
 envarg.add_argument("--channel_wise_inhibited_softmax", type=bool, default=True, help="Apply channel wise inhibited softmax.")
 envarg.add_argument('--normalizer', choices=['standard', 'mean_subtraction', 'simple_norm'], default='simple_norm', help='Normalization option.')
 envarg.add_argument('--upsampling_mode', choices=['resize', 'bilinear_transpose_conv'], default='resize', help='Upsampling algorithm.')
 envarg.add_argument("--augmentation", type=bool, default=True, help="Whether or not to use data augmentation.")
 
 dataarg = parser.add_argument_group('Read data')
-dataarg.add_argument("--crop_size", type=float, default=75, help="Crop size for batch training.")
+dataarg.add_argument("--crop_size", type=float, default=64, help="Crop size for batch training.")
 
 trainarg = parser.add_argument_group('Training')
 trainarg.add_argument("--batch_size", type=int, default=64, help="Batch size for network training.")
-trainarg.add_argument("--total_epochs", type=int, default=550, help="Epoch total number for network training.")
+trainarg.add_argument("--total_epochs", type=int, default=650, help="Epoch total number for network training.")
 
 args = parser.parse_args()
 
@@ -73,16 +74,22 @@ file = open(os.path.join(val_dataset_base_dir, "val.txt"), 'r')
 val_images_filename_list = [line for line in file]
 
 # Define the input shapes
-input_image_shape = [args.crop_size, args.crop_size, 3]
-label_image_shape = [args.crop_size, args.crop_size]
+input_image_shape = [None, None, 3]
+label_image_shape = [None, None]
 
 # get the model placeholders
-batch_images_placeholder, batch_labels_placeholder, is_training_placeholder, keep_prob = model_input(input_image_shape, label_image_shape)
+batch_images_placeholder, batch_labels_placeholder, is_training_placeholder = model_input(input_image_shape, label_image_shape)
 
-logits = model(batch_images_placeholder, args, is_training_placeholder)
+#batch_images, batch_labels = tf.map_fn(lambda inputs_: random_flip_image_and_annotation(inputs_[0], tf.expand_dims(inputs_[1],2)), (batch_images_placeholder, batch_labels_placeholder))
+#batch_labels = tf.reshape(batch_labels, [-1,args.crop_size,args.crop_size])
+
+batch_images, batch_labels = batch_images_placeholder, batch_labels_placeholder
+
+with slim.arg_scope(model_arg_scope(args.l2_regularizer, args.batch_norm_decay, args.batch_norm_epsilon)):
+    logits = model(batch_images, args, is_training_placeholder)
 
 # get the error and predictions from the network
-cross_entropy, pred, probabilities = model_loss(logits, batch_labels_placeholder, class_labels)
+cross_entropy, pred, probabilities = model_loss(logits, batch_labels, class_labels)
 
 # Example: decay from 0.01 to 0.0001 in 10000 steps using sqrt (i.e. power=1. linearly):
 global_step = tf.Variable(0, trainable=False)
@@ -90,8 +97,8 @@ decay_steps = total_step
 learning_rate = tf.train.polynomial_decay(args.starting_learning_rate, global_step,
                                           decay_steps, args.ending_learning_rate,
                                           power=1)
-
-with tf.variable_scope("adam_vars"):
+tf.summary.scalar('learning_rate', learning_rate)
+with tf.variable_scope("optimizer_vars"):
     if args.optimizer == "momentum":
         optimizer = tf.train.MomentumOptimizer(learning_rate=learning_rate, momentum=0.9)
     elif args.optimizer == "adam":
@@ -99,20 +106,18 @@ with tf.variable_scope("adam_vars"):
     elif args.optimizer == "rmsprop":
         optimizer = tf.train.RMSPropOptimizer(learning_rate=learning_rate, momentum=0.0, decay=0.9, epsilon=1e-10)
 
-    # #optimizer = tf.train.AdamOptimizer(learning_rate=0.01)
-    gradients = optimizer.compute_gradients(loss=cross_entropy)
-    train_step = slim.learning.create_train_op(cross_entropy, optimizer, global_step=global_step)
+#update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
+#if update_ops:
+#    updates = tf.group(*update_ops)
+#    cross_entropy = control_flow_ops.with_dependencies([updates], cross_entropy)
 
-update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
-if update_ops:
-    updates = tf.group(*update_ops)
-    cross_entropy = control_flow_ops.with_dependencies([updates], cross_entropy)
+train_step = slim.learning.create_train_op(cross_entropy, optimizer, global_step=global_step)
 
 # Define the accuracy metric: Mean Intersection Over Union
 miou, update_op = slim.metrics.streaming_mean_iou(predictions=pred,
-                                                   labels=batch_labels_placeholder,
+                                                   labels=batch_labels,
                                                    num_classes=args.number_of_classes)
-
+tf.summary.scalar('miou', miou)
 
 # Put all summary ops into one op. Produces string when you run it.
 process_str_id = str(os.getpid())
@@ -139,28 +144,26 @@ with tf.Session() as sess:
     for epoch in range(args.total_epochs):
 
         for batch_image, batch_annotations, _, _ in next_batch(train_images_dir, train_annotations_dir, images_filename_list,
-                                                         batch_size=args.batch_size, crop_size=args.crop_size, normalizer=args.normalizer):
+                                                         batch_size=args.crop_size, crop_size=args.crop_size):
 
             _, global_step_np, train_loss, pred_np, probabilities_np, summary_string, lr_np = sess.run([train_step, global_step, cross_entropy, pred,
                                                                                  probabilities, merged_summary_op, learning_rate],
                                                         feed_dict={is_training_placeholder: True,
                                                                   batch_images_placeholder:batch_image,
-                                                                  batch_labels_placeholder:batch_annotations,
-                                                                  keep_prob: args.keep_prob})
+                                                                  batch_labels_placeholder:batch_annotations})
             train_writer.add_summary(summary_string, global_step_np)
 
         if epoch % 10 == 0:
             total_miou_np = []
             total_val_loss = []
 
-            for batch_images_val, batch_annotations_val, _, original_label in next_batch(val_images_dir, val_annotations_dir, val_images_filename_list,
-                                                                      crop_size=args.crop_size, random_cropping=False, normalizer=args.normalizer):
+            for batch_images_val, batch_annotations_val, _, _ in next_batch(val_images_dir, val_annotations_dir, val_images_filename_list,
+                                                                      batch_size=args.crop_size, crop_size=args.crop_size):
 
                 val_loss, pred_np, probabilities_np, summary_string, _ = sess.run([cross_entropy, pred, probabilities, merged_summary_op, update_op],
                                                                     feed_dict={is_training_placeholder: False,
                                                                               batch_images_placeholder:batch_images_val,
-                                                                              batch_labels_placeholder:batch_annotations_val,
-                                                                              keep_prob: 1.0})
+                                                                              batch_labels_placeholder:batch_annotations_val})
 
                 miou_np = sess.run(miou)
                 total_val_loss.append(val_loss)
