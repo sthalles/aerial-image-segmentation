@@ -1,4 +1,4 @@
-from network import model_input, model, model_arg_scope
+from network import model_input, model, model_arg_scope, lighter_model
 import tensorflow as tf
 from tensorflow.python.ops import control_flow_ops
 from read_data import next_batch, reconstruct_image
@@ -12,8 +12,8 @@ import json
 from sklearn.metrics import recall_score, confusion_matrix, accuracy_score, f1_score
 plt.interactive(False)
 
-log_folder = '/home/thalles_silva/log_folder'
-model_id = "27436"
+log_folder = '/home/thalles/log_folder'
+model_id = "2797"
 
 def plot_confusion_matrix(cm, classes,
                           normalize=False,
@@ -76,7 +76,7 @@ label_image_shape = [args.crop_size, args.crop_size]
 batch_images_placeholder, batch_labels_placeholder, is_training_placeholder = model_input(input_image_shape, label_image_shape)
 
 with slim.arg_scope(model_arg_scope(args.l2_regularizer, args.batch_norm_decay, args.batch_norm_epsilon)):
-    logits = model(batch_images_placeholder, args, is_training_placeholder)
+    logits = lighter_model(batch_images_placeholder, args, is_training_placeholder)
 
 predictions = tf.argmax(logits, dimension=3)
 probabilities = tf.nn.softmax(logits)
@@ -91,7 +91,7 @@ probabilities = tf.nn.softmax(logits)
 #                                                    num_classes=number_of_classes)
 
 # define the images and annotations path
-base_dataset_dir = "/home/thalles_silva/DataPublic/Road_and_Buildings_detection_dataset/mass_merged"
+base_dataset_dir = "/home/thalles/mass_merged"
 train_dataset_base_dir = os.path.join(base_dataset_dir, "train")
 images_folder_name = "sat/"
 annotations_folder_name = "map/"

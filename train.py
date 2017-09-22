@@ -20,14 +20,15 @@ envarg.add_argument("--batch_norm_epsilon", type=float, default=0.001, help="bat
 envarg.add_argument('--batch_norm_decay', type=float, default=0.9, help='batch norm decay argument for batch normalization.')
 envarg.add_argument('--keep_prob', type=float, default=1.0, help='Dropout keep probability.')
 envarg.add_argument("--theta", type=float, default=1.0, help="Compression factor for the DenseNetwork 0 < θ ≤1.")
-envarg.add_argument("--growth_rate", type=int, default=16, help="Growth rate for the DenseNetwork, the paper refars to it as the k parameter.")
+envarg.add_argument("--growth_rate", type=int, default=24, help="Growth rate for the DenseNetwork, the paper refars to it as the k parameter.")
 envarg.add_argument("--number_of_classes", type=int, default=3, help="Number of classes to be predicted.")
 envarg.add_argument("--aspp", type=bool, default=True, help="Use Atrous spatial pyrimid pooling.")
 envarg.add_argument("--image_summary", type=bool, default=True, help="Activate tensorboard image_summary.")
 envarg.add_argument("--l2_regularizer", type=float, default=0.00004, help="l2 regularizer parameter.")
-envarg.add_argument('--starting_learning_rate', type=float, default=0.0006, help="starting learning rate.")
-envarg.add_argument('--ending_learning_rate', type=float, default=6**-6, help="starting learning rate.")
-envarg.add_argument('--optimizer',choices=['momentum', 'adam', 'rmsprop'], default='rmsprop', help='Optimizer of choice.')
+envarg.add_argument('--lr_decay', type=bool, default=True, help="use learning rate decay.")
+envarg.add_argument('--starting_learning_rate', type=float, default=0.0008, help="starting learning rate.")
+envarg.add_argument('--ending_learning_rate', type=float, default=8**-8, help="starting learning rate.")
+envarg.add_argument('--optimizer',choices=['momentum', 'adam', 'rmsprop'], default='adam', help='Optimizer of choice.')
 envarg.add_argument("--channel_wise_inhibited_softmax", type=bool, default=True, help="Apply channel wise inhibited softmax.")
 envarg.add_argument('--normalizer', choices=['standard', 'mean_subtraction', 'simple_norm'], default='simple_norm', help='Normalization option.')
 envarg.add_argument('--upsampling_mode', choices=['resize', 'bilinear_transpose_conv'], default='resize', help='Upsampling algorithm.')
@@ -42,10 +43,10 @@ trainarg.add_argument("--total_epochs", type=int, default=650, help="Epoch total
 
 args = parser.parse_args()
 
-log_folder = '/home/thalles_silva/log_folder'
+log_folder = '/home/thalles/log_folder'
 
 # define the images and annotations path
-base_dataset_dir = "/home/thalles_silva/DataPublic/Road_and_Buildings_detection_dataset/mass_merged"
+base_dataset_dir = "/home/thalles/mass_merged"
 train_dataset_base_dir = os.path.join(base_dataset_dir, "train")
 images_folder_name = "sat/"
 annotations_folder_name = "map/"
@@ -86,7 +87,7 @@ batch_images_placeholder, batch_labels_placeholder, is_training_placeholder = mo
 batch_images, batch_labels = batch_images_placeholder, batch_labels_placeholder
 
 with slim.arg_scope(model_arg_scope(args.l2_regularizer, args.batch_norm_decay, args.batch_norm_epsilon)):
-    logits = model(batch_images, args, is_training_placeholder)
+    logits = lighter_model(batch_images, args, is_training_placeholder)
 
 # get the error and predictions from the network
 cross_entropy, pred, probabilities = model_loss(logits, batch_labels, class_labels)
@@ -94,17 +95,23 @@ cross_entropy, pred, probabilities = model_loss(logits, batch_labels, class_labe
 # Example: decay from 0.01 to 0.0001 in 10000 steps using sqrt (i.e. power=1. linearly):
 global_step = tf.Variable(0, trainable=False)
 decay_steps = total_step
-learning_rate = tf.train.polynomial_decay(args.starting_learning_rate, global_step,
-                                          decay_steps, args.ending_learning_rate,
-                                          power=1)
+
+if args.lr_decay:
+    learning_rate = tf.train.polynomial_decay(args.starting_learning_rate, global_step,
+                                              decay_steps, args.ending_learning_rate,
+                                              power=1)
+else:
+    learning_rate = tf.constant(args.starting_learning_rate)
+
 tf.summary.scalar('learning_rate', learning_rate)
+
 with tf.variable_scope("optimizer_vars"):
     if args.optimizer == "momentum":
         optimizer = tf.train.MomentumOptimizer(learning_rate=learning_rate, momentum=0.9)
     elif args.optimizer == "adam":
         optimizer = tf.train.AdamOptimizer(learning_rate=learning_rate)
     elif args.optimizer == "rmsprop":
-        optimizer = tf.train.RMSPropOptimizer(learning_rate=learning_rate, momentum=0.0, decay=0.9, epsilon=1e-10)
+        optimizer = tf.train.RMSPropOptimizer(learning_rate=0.0004, momentum=0.0, decay=0.9, epsilon=1e-10)
 
 #update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
 #if update_ops:
@@ -143,6 +150,7 @@ with tf.Session() as sess:
 
     for epoch in range(args.total_epochs):
 
+        epoch_mean_train_loss = []
         for batch_image, batch_annotations, _, _ in next_batch(train_images_dir, train_annotations_dir, images_filename_list,
                                                          batch_size=args.crop_size, crop_size=args.crop_size):
 
@@ -151,6 +159,7 @@ with tf.Session() as sess:
                                                         feed_dict={is_training_placeholder: True,
                                                                   batch_images_placeholder:batch_image,
                                                                   batch_labels_placeholder:batch_annotations})
+            epoch_mean_train_loss.append(train_loss)
             train_writer.add_summary(summary_string, global_step_np)
 
         if epoch % 10 == 0:
@@ -158,7 +167,8 @@ with tf.Session() as sess:
             total_val_loss = []
 
             for batch_images_val, batch_annotations_val, _, _ in next_batch(val_images_dir, val_annotations_dir, val_images_filename_list,
-                                                                      batch_size=args.crop_size, crop_size=args.crop_size):
+                                                                      random_cropping=False, crop_size=500):
+
 
                 val_loss, pred_np, probabilities_np, summary_string, _ = sess.run([cross_entropy, pred, probabilities, merged_summary_op, update_op],
                                                                     feed_dict={is_training_placeholder: False,
@@ -180,7 +190,8 @@ with tf.Session() as sess:
             # ax2.set_title('Predicted')
             # plt.show()
 
-            print("Epoch:", epoch, "\tGlobal step:", global_step_np, "\tTraining loss:", train_loss, "\tValidation Loss:",
+            print("Epoch:", epoch, "\tGlobal step:", global_step_np, "\tTraining loss:", train_loss, "Epoch avarage train loss:",
+                  np.mean(epoch_mean_train_loss), "\tValidation Loss:",
                   np.mean(total_val_loss), "\tmIOU:", np.mean(total_miou_np), "\tLearning rate:", lr_np)
 
             test_writer.add_summary(summary_string, global_step_np)

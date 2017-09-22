@@ -32,7 +32,7 @@ def __block_unit(net, k, id, keep_prob=1.0, rate=1):
         return net
 
 @slim.add_arg_scope
-def add_dense_block(input_tensor, k, number_of_units, scope, multi_grid=[], rate=1, keep_prob=1.0, summary=True, standard=True):
+def add_dense_block(input_tensor, k, number_of_units, scope, multi_grid=None, rate=1, keep_prob=1.0, summary=True, standard=True):
 
     with tf.variable_scope(scope):
         block = input_tensor
@@ -40,7 +40,8 @@ def add_dense_block(input_tensor, k, number_of_units, scope, multi_grid=[], rate
         for i in range(0,number_of_units):
 
             # compute atrous conv rate
-            if not multi_grid:
+            if multi_grid is not None:
+                print(multi_grid)
                 if len(multi_grid) != number_of_units:
                     raise("The length of the multi_grid array must match the number of units.")
                 rate = rate*multi_grid[i]
@@ -127,7 +128,7 @@ def add_aspp_layer(net, scope, summary=True):
     :return: network layer with aspp applyed to it.
     """
     with tf.variable_scope(scope):
-        depth = slim.utils.last_dimension(net.get_shape(), min_rank=4)
+        depth = 64
 
         at_pool1x1 = slim.conv2d(net, depth, [1,1], scope="conv_1x1_0", activation_fn=None)
 
@@ -198,51 +199,41 @@ def lighter_model(batch_images, args, is_training, reuse=False):
                 batch_images = (batch_images - 128.) / 128.
             elif args.normalizer == "simple_norm":
                 batch_images = tf.divide(batch_images, 255., name="data_normalization")
-                    # We refer to layers between blocks as transition layers, which do convolution and pooling
-                net = slim.conv2d(batch_images, 2*args.growth_rate, [7,7], scope='conv1', stride=2) # output stride 2
+
+            net = slim.conv2d(batch_images, 2*args.growth_rate, [7,7], scope='conv1', stride=2) # output stride 2
 
             # dense block 1
-            block_1 = add_dense_block(net, args.growth_rate, 6, "block_1", args.keep_prob)
+            block_1 = add_dense_block(net, args.growth_rate, 6, "block_1", keep_prob=args.keep_prob)
 
-            net = add_transition_layer(block_1, args.keep_prob, scope="transition_layer_1") # output stride 4
+            net = add_transition_layer(block_1, args.keep_prob, scope="transition_layer_1", theta=args.theta) # output stride 4
 
             # dense block 2
-            block_2 = add_dense_block(net, args.growth_rate, 9, "block_2", args.keep_prob)
+            block_2 = add_dense_block(net, args.growth_rate, 12, "block_2", keep_prob=args.keep_prob)
 
-            net = add_transition_layer(block_2, args.keep_prob, scope="transition_layer_2", pooling=False) # output stride 4
+            net = add_transition_layer(block_2, args.keep_prob, scope="transition_layer_2", pooling=False, theta=args.theta) # output stride 4
 
             # dense block 3
-            multi_grid = [1,1,1,1,2,2,2,2,1,1,1,1]
-            rate = 2
-            block_3 = add_dense_block(net, args.growth_rate, 12, scope="block_3",
-                                  keep_prob=args.keep_prob, multi_grid=multi_grid, rate=rate)
+            block_3 = add_dense_block(net, args.growth_rate, 24, scope="block_3", keep_prob=args.keep_prob)
 
-            net = add_transition_layer(block_3, args.keep_prob, scope="transition_layer_3", pooling=False) # output stride 8
-
-            #####################################
-            # DenseNet based Decoder
-            #####################################
+            net = add_transition_layer(block_3, args.keep_prob, scope="transition_layer_3", pooling=False, theta=args.theta) # output stride 4
 
             block_2_shape = tf.shape(block_2)
             new_size = (block_2_shape[1], block_2_shape[2])
             net = add_upsampling_layer(net, new_size, scope="upsampling_layer_1")  # output stride 4
 
-            multi_grid = [1,2,1]
-            rate = 4
-            net = add_dense_block(net, args.growth_rate, 3, scope="block_4",
-                                  keep_prob=args.keep_prob, multi_grid=multi_grid, rate=rate)
+            net = add_dense_block(net, args.growth_rate, 16, scope="block_4", keep_prob=args.keep_prob)
 
             # if true, implement an Atrous Spatial Pyramid Pooling layer before the logits output.
             if args.aspp:
                 net = add_aspp_layer(net, "aspp_layer_1")
 
-            net = slim.batch_norm(net, activation_fn=tf.nn.relu)
-            net = slim.conv2d(net, args.number_of_classes, (3,3), activation_fn=None, normalizer_fn=None)
-
             # resize the image to its original size
             batch_images_shape = tf.shape(batch_images)
             new_size = (batch_images_shape[1], batch_images_shape[2])
-            net = tf.image.resize_images(net, new_size)
+            net = add_upsampling_layer(net, new_size, scope="upsampling_layer_2")  # output stride 4
+
+            net = slim.batch_norm(net, activation_fn=tf.nn.relu)
+            net = slim.conv2d(net, args.number_of_classes, (3,3), activation_fn=None, normalizer_fn=None)
 
             # If true, zero out all the logits from class 0 before calculating the softmax with cross entropy loss
             if args.channel_wise_inhibited_softmax:
